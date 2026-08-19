@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VOLT ARENA</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root {
+    --ink: #05070d;
+    --panel: #0d1220;
+    --line: #1f2740;
+    --volt: #d4ff3f;
+    --volt-dim: #8fae2a;
+    --danger: #ff4d5e;
+    --text: #e7ecf5;
+    --muted: #7b8399;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--ink); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  #scene-canvas { position: fixed; inset: 0; display: block; }
+
+  /* ---- Join screen ---- */
+  #join-screen {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% 20%, #131a2e 0%, var(--ink) 70%);
+  }
+  #join-screen.hidden { display: none; }
+  .join-card {
+    width: 460px; max-width: 92vw;
+    background: linear-gradient(180deg, var(--panel), #0a0e18);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 32px 30px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .brand .bolt { color: var(--volt); font-size: 26px; font-weight: 900; }
+  .brand h1 {
+    font-size: 26px; letter-spacing: 4px; font-weight: 800;
+    font-family: 'Arial Black', Impact, sans-serif;
+  }
+  .tagline { color: var(--muted); font-size: 12px; letter-spacing: 1px; margin-bottom: 24px; }
+  label { display: block; font-size: 11px; letter-spacing: 1.5px; color: var(--muted); margin: 16px 0 6px; text-transform: uppercase; }
+  input[type=text] {
+    width: 100%; background: #060a13; border: 1px solid var(--line);
+    color: var(--text); padding: 11px 12px; font-size: 14px; border-radius: 3px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--volt); }
+  #skin-grid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 8px;
+  }
+  .skin-swatch {
+    aspect-ratio: 1; border-radius: 3px; cursor: pointer;
+    border: 2px solid transparent; position: relative;
+    transition: transform 0.1s;
+  }
+  .skin-swatch:hover { transform: scale(1.06); }
+  .skin-swatch.selected { border-color: var(--volt); }
+  .skin-swatch.selected::after {
+    content: '✓'; position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center; color: #000; font-weight: bold; text-shadow: 0 0 4px #fff;
+  }
+  #join-btn {
+    width: 100%; margin-top: 26px; padding: 14px;
+    background: var(--volt); color: #0a0e05; border: none;
+    font-weight: 800; letter-spacing: 2px; font-size: 14px;
+    border-radius: 3px; cursor: pointer; text-transform: uppercase;
+  }
+  #join-btn:hover { filter: brightness(1.08); }
+  #join-btn:disabled { opacity: 0.5; cursor: default; }
+  #join-error { color: var(--danger); font-size: 12px; margin-top: 10px; min-height: 14px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 14px; line-height: 1.5; }
+
+  /* ---- Click-to-play lock screen ---- */
+  #lock-screen {
+    position: fixed; inset: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+    background: rgba(5,7,13,0.75); cursor: pointer;
+  }
+  #lock-screen.hidden { display: none; }
+  #lock-screen h2 { font-size: 20px; letter-spacing: 2px; }
+  #lock-screen p { color: var(--muted); font-size: 13px; }
+
+  /* ---- HUD ---- */
+  #hud { position: fixed; inset: 0; z-index: 20; pointer-events: none; display: none; }
+  #hud.active { display: block; }
+  #crosshair {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 18px; height: 18px;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: var(--volt);
+  }
+  #crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
+  #crosshair::after { top: 8px; left: 0; height: 2px; width: 18px; }
+
+  #health-wrap {
+    position: absolute; bottom: 26px; left: 26px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #health-bar-bg {
+    width: 200px; height: 14px; background: #1a0e0e;
+    border: 1px solid #3a1414; border-radius: 2px; overflow: hidden;
+  }
+  #health-bar-fill {
+    height: 100%; width: 100%; background: linear-gradient(90deg, #ff4d5e, #ff8a5b);
+    transition: width 0.15s;
+  }
+  #health-label { font-size: 13px; font-weight: 700; color: var(--danger); min-width: 30px; }
+
+  #kill-feed {
+    position: absolute; top: 20px; right: 20px;
+    display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+    font-size: 12px; max-width: 260px;
+  }
+  .kf-entry {
+    background: rgba(10,14,24,0.75); padding: 5px 10px; border-radius: 2px;
+    border-left: 2px solid var(--volt);
+  }
+  .kf-entry b { color: var(--volt); }
+
+  #scoreboard {
+    position: absolute; top: 20px; left: 20px;
+    background: rgba(10,14,24,0.8); border: 1px solid var(--line); border-radius: 3px;
+    padding: 10px 14px; font-size: 12px; min-width: 170px;
+  }
+  #scoreboard h3 { font-size: 10px; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; }
+  .sb-row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .sb-row.me { color: var(--volt); }
+
+  #death-overlay {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px; background: rgba(20,5,8,0.55);
+  }
+  #death-overlay.show { display: flex; }
+  #death-overlay h2 { font-size: 28px; letter-spacing: 3px; color: var(--danger); }
+  #death-overlay p { color: var(--muted); font-size: 13px; }
+
+  #room-tag {
+    position: absolute; bottom: 24px; right: 26px; font-size: 11px; color: var(--muted);
+    text-align: right;
+  }
+  #room-tag b { color: var(--text); }
+</style>
+</head>
+<body>
+
+<canvas id="scene-canvas"></canvas>
+
+<!-- JOIN SCREEN -->
+<div id="join-screen">
+  <div class="join-card">
+    <div class="brand"><span class="bolt">⚡</span><h1>VOLT ARENA</h1></div>
+    <div class="tagline">FIRST-PERSON ARENA COMBAT — BROWSER MULTIPLAYER</div>
+
+    <label>Callsign</label>
+    <input type="text" id="name-input" placeholder="Your name" maxlength="14">
+
+    <label>Room Code</label>
+    <input type="text" id="room-input" placeholder="e.g. crate-yard" maxlength="20">
+
+    <label>Skin</label>
+    <div id="skin-grid"></div>
+
+    <button id="join-btn">Deploy</button>
+    <div id="join-error"></div>
+    <div class="hint">Share the same room code with a friend to fight in the same arena. WASD to move, mouse to look, click to fire.</div>
+  </div>
+</div>
+
+<!-- CLICK TO LOCK POINTER -->
+<div id="lock-screen" class="hidden">
+  <h2>CLICK TO ENTER ARENA</h2>
+  <p>Mouse look will lock to the window — press ESC anytime to release it.</p>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="crosshair"></div>
+  <div id="health-wrap">
+    <div id="health-bar-bg"><div id="health-bar-fill"></div></div>
+    <div id="health-label">100</div>
+  </div>
+  <div id="kill-feed"></div>
+  <div id="scoreboard">
+    <h3>Scoreboard</h3>
+    <div id="sb-rows"></div>
+  </div>
+  <div id="death-overlay">
+    <h2>ELIMINATED</h2>
+    <p id="death-msg"></p>
+  </div>
+  <div id="room-tag">Room: <b id="room-tag-code">-</b></div>
+</div>
+
+<script>
+/* =========================================================================
+   FIREBASE CONFIG — reused from your Snake project (same database, new path)
+   ========================================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyAbOtV01j58DefcYcAkiS4ykmSEavGEp18",
+  authDomain: "sanke-bf7e6.firebaseapp.com",
+  databaseURL: "https://sanke-bf7e6-default-rtdb.firebaseio.com",
+  projectId: "sanke-bf7e6",
+  storageBucket: "sanke-bf7e6.firebasestorage.app",
+  messagingSenderId: "1054925722873",
+  appId: "1:1054925722873:web:3cc6ce579e9ab9eb92fe28"
+};
+let db = null, firebaseReady = false;
+try {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+  firebaseReady = true;
+} catch (e) { console.error('Firebase init failed', e); }
+
+/* ---- Skins ---- */
+const SKINS = [
+  { name: 'Volt',    body: 0xd4ff3f, accent: 0x2a3200, head: 0xbfe62f },
+  { name: 'Magma',   body: 0xff4d5e, accent: 0x3a0d12, head: 0xe0303f },
+  { name: 'Cobalt',  body: 0x3fa9ff, accent: 0x0d2a3a, head: 0x2f8fe0 },
+  { name: 'Violet',  body: 0xb14dff, accent: 0x2a0d3a, head: 0x9a2fe0 },
+  { name: 'Tangerine', body: 0xff9a3f, accent: 0x3a220d, head: 0xe07f2f },
+  { name: 'Bone',    body: 0xe7ecf5, accent: 0x33394a, head: 0xc8ceda },
+];
+let selectedSkin = 0;
+
+const skinGrid = document.getElementById('skin-grid');
+SKINS.forEach((s, i) => {
+  const el = document.createElement('div');
+  el.className = 'skin-swatch' + (i === 0 ? ' selected' : '');
+  el.style.background = `#${s.body.toString(16).padStart(6,'0')}`;
+  el.title = s.name;
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.skin-swatch').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedSkin = i;
+  });
+  skinGrid.appendChild(el);
+});
+
+/* =========================================================================
+   THREE.JS SCENE
+   ========================================================================= */
+const canvas = document.getElementById('scene-canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e18);
+scene.fog = new THREE.Fog(0x0a0e18, 25, 70);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 300);
+camera.rotation.order = 'YXZ';
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Lighting
+scene.add(new THREE.HemisphereLight(0x8899cc, 0x0a0a12, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(20, 35, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -40; sun.shadow.camera.right = 40;
+sun.shadow.camera.top = 40; sun.shadow.camera.bottom = -40;
+scene.add(sun);
+
+// Ground
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x141a28, roughness: 0.95 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(70, 70), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Grid accent lines
+const grid = new THREE.GridHelper(70, 35, 0x2a3550, 0x1a2136);
+grid.position.y = 0.01;
+scene.add(grid);
+
+// Perimeter walls
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x1c2338, roughness: 0.8 });
+function makeWall(w, h, d, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+  m.position.set(x, y, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  return m;
+}
+makeWall(70, 6, 1, 0, 3, -35);
+makeWall(70, 6, 1, 0, 3, 35);
+makeWall(1, 6, 70, -35, 3, 0);
+makeWall(1, 6, 70, 35, 3, 0);
+
+// Obstacles (crates) — also used for movement + bullet collision
+const crateMat = new THREE.MeshStandardMaterial({ color: 0x263050, roughness: 0.7 });
+const obstacles = []; // {x,z,radius,mesh}
+const cratePositions = [
+  [8,8,2.5],[-8,8,2.5],[8,-8,2.5],[-8,-8,2.5],
+  [0,14,2],[0,-14,2],[16,0,2],[-16,0,2],
+  [4,-2,1.5],[-4,2,1.5]
+];
+cratePositions.forEach(([x,z,r]) => {
+  const h = 2 + r;
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(r*2, h, r*2), crateMat);
+  mesh.position.set(x, h/2, z);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  scene.add(mesh);
+  obstacles.push({ x, z, radius: r * 0.9 });
+});
+
+const ARENA_BOUND = 33;
+
+/* ---- Local player state ---- */
+let playerId = 'p' + Math.random().toString(36).slice(2, 9);
+let roomCode = null, playerName = '';
+let pos = new THREE.Vector3(0, 1.7, 20);
+let yaw = 0, pitch = 0;
+let velocityY = 0;
+let onGround = true;
+let health = 100, alive = true, kills = 0, deaths = 0;
+let keys = {};
+let lastShot = 0;
+const FIRE_COOLDOWN = 250;
+const DAMAGE = 20;
+const MOVE_SPEED = 7.5;
+const SPAWN_POINTS = [
+  [20,1.7,20],[-20,1.7,20],[20,1.7,-20],[-20,1.7,-20],[0,1.7,0]
+];
+
+function randomSpawn() {
+  const s = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
+  return new THREE.Vector3(s[0], s[1], s[2]);
+}
+
+/* ---- Viewmodel gun ---- */
+const gunGroup = new THREE.Group();
+const gunMat = new THREE.MeshStandardMaterial({ color: 0x222833 });
+const gunBody = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.5), gunMat);
+gunBody.position.set(0.22, -0.18, -0.5);
+gunGroup.add(gunBody);
+camera.add(gunGroup);
+scene.add(camera);
+let recoil = 0;
+
+/* ---- Remote players ---- */
+const remotePlayers = {}; // id -> { group, targetPos, targetYaw, health, mesh parts, nameSprite }
+
+function makeNameSprite(text) {
+  const cvs = document.createElement('canvas');
+  cvs.width = 256; cvs.height = 64;
+  const ctx = cvs.getContext('2d');
+  ctx.fillStyle = 'rgba(10,14,24,0.55)';
+  ctx.fillRect(0, 16, 256, 32);
+  ctx.font = 'bold 28px Segoe UI, sans-serif';
+  ctx.fillStyle = '#e7ecf5';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 40);
+  const tex = new THREE.CanvasTexture(cvs);
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(2, 0.5, 1);
+  sprite.position.y = 1.35;
+  return sprite;
+}
+
+function buildCharacter(skin) {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: skin.body });
+  const accentMat = new THREE.MeshStandardMaterial({ color: skin.accent });
+  const headMat = new THREE.MeshStandardMaterial({ color: skin.head });
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.3), bodyMat);
+  torso.position.y = 0.75; torso.castShadow = true;
+  group.add(torso);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), headMat);
+  head.position.y = 1.28; head.castShadow = true;
+  group.add(head);
+
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.6, 0.2), accentMat);
+  legL.position.set(-0.13, 0.3, 0); legL.castShadow = true;
+  group.add(legL);
+  const legR = legL.clone();
+  legR.position.x = 0.13;
+  group.add(legR);
+
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.55, 0.15), bodyMat);
+  armL.position.set(-0.35, 0.75, 0); armL.castShadow = true;
+  group.add(armL);
+  const armR = armL.clone();
+  armR.position.x = 0.35;
+  group.add(armR);
+
+  return group;
+}
+
+function ensureRemotePlayer(id, data) {
+  if (remotePlayers[id]) return remotePlayers[id];
+  const skin = SKINS[data.skin] || SKINS[0];
+  const group = buildCharacter(skin);
+  const nameSprite = makeNameSprite(data.name || '???');
+  group.add(nameSprite);
+  scene.add(group);
+  const rp = {
+    group, nameSprite,
+    targetPos: new THREE.Vector3(data.x||0, 0, data.z||0),
+    targetYaw: data.yaw || 0,
+    health: data.health != null ? data.health : 100,
+    lastSeen: Date.now()
+  };
+  remotePlayers[id] = rp;
+  return rp;
+}
+
+function removeRemotePlayer(id) {
+  const rp = remotePlayers[id];
+  if (!rp) return;
+  scene.remove(rp.group);
+  delete remotePlayers[id];
+}
+
+/* =========================================================================
+   INPUT
+   ========================================================================= */
+document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+const lockScreen = document.getElementById('lock-screen');
+lockScreen.addEventListener('click', () => {
+  canvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => {
+  if (document.pointerLockElement === canvas) {
+    lockScreen.classList.add('hidden');
+  } else if (connected) {
+    lockScreen.classList.remove('hidden');
+  }
+});
+document.addEventListener('mousemove', (e) => {
+  if (document.pointerLockElement !== canvas) return;
+  yaw -= e.movementX * 0.0022;
+  pitch -= e.movementY * 0.0022;
+  pitch = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, pitch));
+});
+canvas.addEventListener('mousedown', (e) => {
+  if (document.pointerLockElement !== canvas || !alive) return;
+  if (e.button === 0) shoot();
+});
+
+function shoot() {
+  const now = performance.now();
+  if (now - lastShot < FIRE_COOLDOWN) return;
+  lastShot = now;
+  recoil = 1;
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+  raycaster.far = 100;
+
+  let closestId = null, closestDist = Infinity;
+  Object.entries(remotePlayers).forEach(([id, rp]) => {
+    const hitbox = new THREE.Box3().setFromCenterAndSize(
+      new THREE.Vector3(rp.group.position.x, 0.85, rp.group.position.z),
+      new THREE.Vector3(0.7, 1.7, 0.7)
+    );
+    const hit = raycaster.ray.intersectBox(hitbox, new THREE.Vector3());
+    if (hit) {
+      const d = camera.position.distanceTo(hit);
+      if (d < closestDist) { closestDist = d; closestId = id; }
+    }
+  });
+
+  if (closestId) applyDamage(closestId);
+}
+
+function applyDamage(victimId) {
+  const ref = db.ref(`voltarena/${roomCode}/players/${victimId}/health`);
+  ref.transaction((current) => {
+    const cur = (current == null) ? 100 : current;
+    return Math.max(0, cur - DAMAGE);
+  }).then((res) => {
+    if (res.committed && res.snapshot.val() === 0) {
+      kills++;
+      db.ref(`voltarena/${roomCode}/players/${playerId}/kills`).set(kills);
+      db.ref(`voltarena/${roomCode}/players/${victimId}/deaths`).transaction(d => (d||0)+1);
+      const victimName = remotePlayers[victimId]?.lastName || 'a player';
+      pushKillFeed(playerName, victimName);
+    }
+  }).catch(() => {});
+}
+
+function pushKillFeed(killer, victim) {
+  db.ref(`voltarena/${roomCode}/killfeed`).push({ killer, victim, ts: Date.now() });
+}
+
+/* =========================================================================
+   JOIN / LEAVE
+   ========================================================================= */
+let connected = false;
+let playersRef = null, killfeedRef = null;
+const joinScreen = document.getElementById('join-screen');
+const hud = document.getElementById('hud');
+
+document.getElementById('join-btn').addEventListener('click', joinRoom);
+
+async function joinRoom() {
+  const joinBtn = document.getElementById('join-btn');
+  const joinError = document.getElementById('join-error');
+  const nameInput = document.getElementById('name-input');
+  const roomInput = document.getElementById('room-input');
+
+  if (!firebaseReady) {
+    joinError.textContent = "Couldn't connect to the server. Refresh and try again.";
+    return;
+  }
+
+  playerName = nameInput.value.trim() || 'Player';
+  let code = roomInput.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  if (!code) code = 'arena-' + Math.random().toString(36).slice(2, 6);
+  roomCode = code;
+
+  joinBtn.disabled = true;
+  joinBtn.textContent = 'Deploying...';
+  joinError.textContent = '';
+
+  try {
+    pos = randomSpawn();
+    health = 100; alive = true; kills = 0; deaths = 0;
+
+    playersRef = db.ref(`voltarena/${roomCode}/players`);
+    killfeedRef = db.ref(`voltarena/${roomCode}/killfeed`);
+    const myRef = playersRef.child(playerId);
+
+    await myRef.set({
+      name: playerName, skin: selectedSkin,
+      x: pos.x, z: pos.z, yaw: 0,
+      health: 100, kills: 0, deaths: 0,
+      ts: firebase.database.ServerValue.TIMESTAMP
+    });
+    myRef.onDisconnect().remove();
+
+    playersRef.on('value', (snap) => {
+      const all = snap.val() || {};
+      Object.keys(remotePlayers).forEach(id => { if (!all[id]) removeRemotePlayer(id); });
+      Object.entries(all).forEach(([id, data]) => {
+        if (id === playerId) {
+          // external damage detection
+          if (data.health != null && data.health < health) {
+            health = data.health;
+            flashDamage();
+          }
+          if (alive && health <= 0) handleDeath();
+          return;
+        }
+        const rp = ensureRemotePlayer(id, data);
+        rp.targetPos.set(data.x || 0, 0, data.z || 0);
+        rp.targetYaw = data.yaw || 0;
+        rp.health = data.health != null ? data.health : 100;
+        rp.lastName = data.name;
+        rp.kills = data.kills || 0;
+        rp.deaths = data.deaths || 0;
+        rp.group.visible = rp.health > 0;
+        rp.lastSeen = Date.now();
+      });
+      renderScoreboard(all);
+    });
+
+    killfeedRef.limitToLast(20).on('child_added', (snap) => {
+      const v = snap.val();
+      addKillFeedEntry(v.killer, v.victim);
+    });
+
+    connected = true;
+    joinScreen.classList.add('hidden');
+    hud.classList.add('active');
+    document.getElementById('room-tag-code').textContent = roomCode;
+    lockScreen.classList.remove('hidden');
+    startSyncLoop();
+  } catch (e) {
+    joinError.textContent = 'Connection failed. Check your internet and try again.';
+    console.error(e);
+  }
+  joinBtn.disabled = false;
+  joinBtn.textContent = 'Deploy';
+}
+
+let syncTimer = null;
+function startSyncLoop() {
+  clearInterval(syncTimer);
+  syncTimer = setInterval(() => {
+    if (!connected) return;
+    db.ref(`voltarena/${roomCode}/players/${playerId}`).update({
+      x: pos.x, z: pos.z, yaw,
+      ts: firebase.database.ServerValue.TIMESTAMP
+    }).catch(() => {});
+  }, 100);
+}
+
+/* =========================================================================
+   DEATH / RESPAWN
+   ========================================================================= */
+const deathOverlay = document.getElementById('death-overlay');
+function handleDeath() {
+  alive = false;
+  deathOverlay.classList.add('show');
+  document.getElementById('death-msg').textContent = 'Respawning in 3...';
+  let t = 3;
+  const iv = setInterval(() => {
+    t--;
+    document.getElementById('death-msg').textContent = t > 0 ? `Respawning in ${t}...` : 'Respawning...';
+    if (t <= 0) {
+      clearInterval(iv);
+      respawn();
+    }
+  }, 1000);
+}
+function respawn() {
+  pos = randomSpawn();
+  health = 100; alive = true;
+  deathOverlay.classList.remove('show');
+  db.ref(`voltarena/${roomCode}/players/${playerId}`).update({
+    x: pos.x, z: pos.z, health: 100
+  }).catch(() => {});
+}
+let damageFlashT = 0;
+function flashDamage() { damageFlashT = 1; }
+
+/* =========================================================================
+   HUD RENDERING
+   ========================================================================= */
+function renderScoreboard(all) {
+  const rows = Object.entries(all).map(([id, d]) => ({
+    id, name: d.name || '???', kills: d.kills || 0, deaths: d.deaths || 0
+  }));
+  rows.push({ id: playerId, name: playerName, kills, deaths });
+  const seen = new Set();
+  const dedup = [];
+  rows.forEach(r => { if (!seen.has(r.id)) { seen.add(r.id); dedup.push(r); } });
+  dedup.sort((a,b) => b.kills - a.kills);
+  const el = document.getElementById('sb-rows');
+  el.innerHTML = '';
+  dedup.slice(0, 8).forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'sb-row' + (r.id === playerId ? ' me' : '');
+    row.innerHTML = `<span>${r.name}</span><span>${r.kills} / ${r.deaths}</span>`;
+    el.appendChild(row);
+  });
+}
+
+function addKillFeedEntry(killer, victim) {
+  const feed = document.getElementById('kill-feed');
+  const div = document.createElement('div');
+  div.className = 'kf-entry';
+  div.innerHTML = `<b>${killer}</b> eliminated ${victim}`;
+  feed.appendChild(div);
+  while (feed.children.length > 5) feed.removeChild(feed.firstChild);
+  setTimeout(() => { div.style.opacity = '0'; div.style.transition = 'opacity 0.6s'; setTimeout(() => div.remove(), 600); }, 5000);
+}
+
+/* =========================================================================
+   MOVEMENT / COLLISION
+   ========================================================================= */
+function tryMove(nx, nz) {
+  for (const o of obstacles) {
+    const dx = nx - o.x, dz = nz - o.z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    if (dist < o.radius + 0.4) return false;
+  }
+  return true;
+}
+
+function updateMovement(dt) {
+  if (!alive || document.pointerLockElement !== canvas) return;
+  const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+  const right = new THREE.Vector3(Math.sin(yaw + Math.PI/2), 0, Math.cos(yaw + Math.PI/2));
+  let move = new THREE.Vector3();
+  if (keys['KeyW']) move.sub(forward);
+  if (keys['KeyS']) move.add(forward);
+  if (keys['KeyA']) move.sub(right);
+  if (keys['KeyD']) move.add(right);
+  if (move.lengthSq() > 0) {
+    move.normalize().multiplyScalar(MOVE_SPEED * dt);
+    const nx = THREE.MathUtils.clamp(pos.x + move.x, -ARENA_BOUND, ARENA_BOUND);
+    const nz = THREE.MathUtils.clamp(pos.z + move.z, -ARENA_BOUND, ARENA_BOUND);
+    if (tryMove(nx, pos.z)) pos.x = nx;
+    if (tryMove(pos.x, nz)) pos.z = nz;
+  }
+  if (keys['Space'] && onGround) { velocityY = 5; onGround = false; }
+  velocityY -= 14 * dt;
+  pos.y += velocityY * dt;
+  if (pos.y <= 1.7) { pos.y = 1.7; velocityY = 0; onGround = true; }
+}
+
+/* =========================================================================
+   RENDER LOOP
+   ========================================================================= */
+let lastFrame = performance.now();
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastFrame) / 1000);
+  lastFrame = now;
+
+  updateMovement(dt);
+  camera.position.copy(pos);
+  camera.rotation.set(pitch, yaw, 0);
+
+  // recoil recovery
+  if (recoil > 0) {
+    recoil = Math.max(0, recoil - dt * 6);
+    gunBody.position.z = -0.5 + recoil * 0.15;
+  }
+
+  // HUD updates
+  document.getElementById('health-bar-fill').style.width = Math.max(0, health) + '%';
+  document.getElementById('health-label').textContent = Math.max(0, Math.round(health));
+
+  // remote player interpolation
+  const nowTs = Date.now();
+  Object.entries(remotePlayers).forEach(([id, rp]) => {
+    rp.group.position.lerp(new THREE.Vector3(rp.targetPos.x, 0, rp.targetPos.z), 0.25);
+    rp.group.rotation.y = rp.targetYaw;
+    rp.nameSprite.lookAt(camera.position);
+    if (nowTs - rp.lastSeen > 6000) removeRemotePlayer(id);
+  });
+
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('beforeunload', () => {
+  if (connected && playersRef) {
+    playersRef.child(playerId).remove().catch(() => {});
+  }
+});
+</script>
+</body>
+</html>
