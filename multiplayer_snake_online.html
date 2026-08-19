@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Multiplayer Snake</title>
+
+<!-- Firebase SDK (compat, no build tools needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --accent: #22c55e;
+    --accent2: #f97316;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    color: var(--text);
+    gap: 12px;
+    padding: 20px;
+  }
+  h1 { margin: 0; font-size: 26px; letter-spacing: 2px; color: var(--accent); }
+  #layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+  #board-wrap {
+    position: relative;
+    border-radius: 12px;
+    padding: 10px;
+    background: var(--panel);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  canvas { display: block; background: #0b1220; border-radius: 6px; }
+  #overlay {
+    position: absolute;
+    inset: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 15, 25, 0.92);
+    border-radius: 6px;
+    text-align: center;
+    gap: 10px;
+    padding: 20px;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h2 { margin: 0; color: var(--accent2); }
+  #overlay p { margin: 0; color: var(--muted); font-size: 13px; max-width: 280px; }
+  input {
+    background: #0b1220;
+    border: 1px solid #334155;
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    width: 200px;
+    text-align: center;
+  }
+  button {
+    background: var(--accent);
+    color: #052e16;
+    border: none;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.secondary { background: #334155; color: var(--text); }
+  #panel {
+    width: 200px;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #panel h3 { margin: 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  #players-list { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+  .player-row { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .player-row.dead { opacity: 0.4; text-decoration: line-through; }
+  .player-row .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #room-info { font-size: 12px; color: var(--muted); word-break: break-all; }
+  #room-info b { color: var(--text); }
+  #status { font-size: 11px; color: var(--muted); text-align: center; }
+  #controls-mobile {
+    display: grid;
+    grid-template-columns: repeat(3, 44px);
+    grid-template-rows: repeat(2, 44px);
+    gap: 6px;
+  }
+  #controls-mobile button { background: #0b1220; color: var(--text); font-size: 16px; padding: 0; }
+  #up { grid-column: 2; grid-row: 1; }
+  #left { grid-column: 1; grid-row: 2; }
+  #down { grid-column: 2; grid-row: 2; }
+  #right { grid-column: 3; grid-row: 2; }
+</style>
+</head>
+<body>
+
+<h1>🐍 MULTIPLAYER SNAKE</h1>
+
+<div id="layout">
+  <div id="board-wrap">
+    <canvas id="board" width="400" height="400"></canvas>
+    <div id="overlay">
+      <h2>Join a game</h2>
+      <p>Enter your name and a room code. Anyone who joins the same room code plays with you, from anywhere.</p>
+      <input id="name-input" placeholder="Your name" maxlength="12">
+      <input id="room-input" placeholder="Room code (e.g. lime7)" maxlength="16">
+      <button id="join-btn">Join / Create Room</button>
+      <div id="join-error" style="color:#f87171; font-size:12px;"></div>
+    </div>
+  </div>
+  <div id="panel">
+    <div>
+      <h3>Room</h3>
+      <div id="room-info">Not connected</div>
+    </div>
+    <div>
+      <h3>Players</h3>
+      <div id="players-list"></div>
+    </div>
+    <div id="status"></div>
+    <button id="leave-btn" class="secondary" style="display:none;">Leave Room</button>
+  </div>
+</div>
+
+<div id="controls-mobile">
+  <button id="up">▲</button>
+  <button id="left">◀</button>
+  <button id="down">▼</button>
+  <button id="right">▶</button>
+</div>
+<div style="font-size:12px; color:var(--muted);">Arrow keys / WASD also work</div>
+
+<script>
+/* =========================================================================
+   1. PASTE YOUR FIREBASE CONFIG HERE
+   Get this from: Firebase Console -> Project Settings -> General ->
+   "Your apps" -> Web app -> SDK setup and configuration -> Config
+   ========================================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyAbOtV01j58DefcYcAkiS4ykmSEavGEp18",
+  authDomain: "sanke-bf7e6.firebaseapp.com",
+  databaseURL: "https://sanke-bf7e6-default-rtdb.firebaseio.com",
+  projectId: "sanke-bf7e6",
+  storageBucket: "sanke-bf7e6.firebasestorage.app",
+  messagingSenderId: "1054925722873",
+  appId: "1:1054925722873:web:3cc6ce579e9ab9eb92fe28"
+};
+/* ========================================================================= */
+
+let db = null;
+let firebaseReady = false;
+try {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+  firebaseReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
+} catch (e) {
+  console.error('Firebase init failed', e);
+}
+
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const tileCount = 25;
+const gridSize = canvas.width / tileCount;
+const COLORS = ['#4ade80', '#38bdf8', '#f472b6', '#facc15', '#a78bfa', '#fb923c', '#2dd4bf', '#f87171'];
+
+let playerId = 'p' + Math.random().toString(36).slice(2, 9);
+let roomCode = null;
+let playerName = '';
+let myColor = '';
+let mySnake = null;
+let food = { x: 5, y: 5 };
+let otherPlayers = {};
+let connected = false;
+let moveTimer = null;
+let writeTimer = null;
+let playersRef = null;
+let foodRef = null;
+
+const overlay = document.getElementById('overlay');
+const roomInfo = document.getElementById('room-info');
+const playersList = document.getElementById('players-list');
+const statusEl = document.getElementById('status');
+const leaveBtn = document.getElementById('leave-btn');
+
+function randomFood(occupied) {
+  let f, tries = 0;
+  do {
+    f = { x: Math.floor(Math.random() * tileCount), y: Math.floor(Math.random() * tileCount) };
+    tries++;
+  } while (occupied.some(c => c.x === f.x && c.y === f.y) && tries < 50);
+  return f;
+}
+
+function initSnake() {
+  const sx = 3 + Math.floor(Math.random() * (tileCount - 6));
+  const sy = 3 + Math.floor(Math.random() * (tileCount - 6));
+  mySnake = {
+    body: [{x: sx, y: sy}, {x: sx - 1, y: sy}, {x: sx - 2, y: sy}],
+    dir: {x: 1, y: 0},
+    nextDir: {x: 1, y: 0},
+    alive: true,
+    score: 0
+  };
+}
+
+async function joinRoom() {
+  const nameInput = document.getElementById('name-input');
+  const roomInput = document.getElementById('room-input');
+  const joinBtn = document.getElementById('join-btn');
+  const joinError = document.getElementById('join-error');
+
+  if (!firebaseReady) {
+    joinError.textContent = "Firebase isn't configured yet — paste your config into the code near the top of the file.";
+    return;
+  }
+
+  const name = nameInput.value.trim() || 'Player';
+  let code = roomInput.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  if (!code) code = 'room-' + Math.random().toString(36).slice(2, 6);
+  playerName = name;
+  roomCode = code;
+  joinError.textContent = '';
+  joinBtn.disabled = true;
+  joinBtn.textContent = 'Joining...';
+
+  try {
+    playersRef = db.ref(`rooms/${roomCode}/players`);
+    foodRef = db.ref(`rooms/${roomCode}/food`);
+
+    const snap = await playersRef.once('value');
+    const existing = snap.val() || {};
+    const usedColors = new Set(Object.values(existing).map(p => p.color));
+    myColor = COLORS.find(c => !usedColors.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+
+    const foodSnap = await foodRef.once('value');
+    food = foodSnap.val() || randomFood([]);
+    if (!foodSnap.val()) await foodRef.set(food);
+
+    initSnake();
+
+    const myRef = playersRef.child(playerId);
+    await myRef.set({
+      name: playerName, color: myColor, body: mySnake.body,
+      alive: true, score: 0, ts: firebase.database.ServerValue.TIMESTAMP
+    });
+    myRef.onDisconnect().remove();
+
+    playersRef.on('value', (snap) => {
+      const all = snap.val() || {};
+      delete all[playerId];
+      otherPlayers = all;
+      renderPlayerList();
+    });
+    foodRef.on('value', (snap) => {
+      if (snap.val()) food = snap.val();
+    });
+
+    connected = true;
+    overlay.classList.add('hidden');
+    leaveBtn.style.display = 'block';
+    roomInfo.innerHTML = `Room: <b>${roomCode}</b><br>You: <b style="color:${myColor}">${playerName}</b>`;
+    statusEl.textContent = 'connected — live';
+    startLoops();
+  } catch (e) {
+    joinError.textContent = 'Could not connect. Check your Firebase config and database rules.';
+    console.error(e);
+  }
+  joinBtn.disabled = false;
+  joinBtn.textContent = 'Join / Create Room';
+}
+
+function writeMyState() {
+  if (!connected || !mySnake || !playersRef) return;
+  playersRef.child(playerId).update({
+    body: mySnake.body, alive: mySnake.alive, score: mySnake.score,
+    ts: firebase.database.ServerValue.TIMESTAMP
+  }).catch(() => {});
+}
+
+function renderPlayerList() {
+  const mine = { id: playerId, name: playerName, color: myColor, alive: mySnake ? mySnake.alive : true, score: mySnake ? mySnake.score : 0 };
+  const all = [mine, ...Object.keys(otherPlayers).map(id => ({ id, ...otherPlayers[id] }))];
+  all.sort((a, b) => b.score - a.score);
+  playersList.innerHTML = '';
+  all.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'player-row' + (p.alive === false ? ' dead' : '');
+    row.innerHTML = `<span class="dot" style="background:${p.color}"></span><span class="pname">${p.name}${p.id === playerId ? ' (you)' : ''}</span><span>${p.score}</span>`;
+    playersList.appendChild(row);
+  });
+}
+
+function allOccupiedCells(excludeSelf) {
+  let cells = [];
+  Object.values(otherPlayers).forEach(p => { if (p.alive !== false && p.body) cells = cells.concat(p.body); });
+  if (!excludeSelf && mySnake) cells = cells.concat(mySnake.body);
+  return cells;
+}
+
+function tick() {
+  if (!mySnake || !mySnake.alive) return;
+  mySnake.dir = mySnake.nextDir;
+  const head = { x: mySnake.body[0].x + mySnake.dir.x, y: mySnake.body[0].y + mySnake.dir.y };
+
+  let dead = false;
+  if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) dead = true;
+  if (!dead && mySnake.body.some(seg => seg.x === head.x && seg.y === head.y)) dead = true;
+  if (!dead && allOccupiedCells(true).some(c => c.x === head.x && c.y === head.y)) dead = true;
+
+  if (dead) {
+    mySnake.alive = false;
+    writeMyState();
+    draw();
+    overlay.innerHTML = `<h2>You crashed!</h2><p>Final score: ${mySnake.score}.</p><button id="respawn-btn">Respawn</button><button id="leave-btn2" class="secondary" style="margin-top:6px;">Leave Room</button>`;
+    overlay.classList.remove('hidden');
+    document.getElementById('respawn-btn').addEventListener('click', respawn);
+    document.getElementById('leave-btn2').addEventListener('click', leaveRoom);
+    return;
+  }
+
+  mySnake.body.unshift(head);
+  if (head.x === food.x && head.y === food.y) {
+    mySnake.score++;
+    food = randomFood([...mySnake.body, ...allOccupiedCells(true)]);
+    foodRef.set(food).catch(() => {});
+  } else {
+    mySnake.body.pop();
+  }
+  draw();
+}
+
+function respawn() {
+  initSnake();
+  overlay.classList.add('hidden');
+  writeMyState();
+}
+
+function draw() {
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(148,163,184,0.06)';
+  for (let i = 0; i <= tileCount; i++) {
+    ctx.beginPath(); ctx.moveTo(i * gridSize, 0); ctx.lineTo(i * gridSize, canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * gridSize); ctx.lineTo(canvas.width, i * gridSize); ctx.stroke();
+  }
+  ctx.fillStyle = '#f97316';
+  ctx.beginPath();
+  ctx.arc(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2, gridSize/2 - 2, 0, Math.PI*2);
+  ctx.fill();
+
+  Object.values(otherPlayers).forEach(p => {
+    if (p.alive === false || !p.body) return;
+    p.body.forEach((seg, i) => {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = i === 0 ? 1 : 0.7;
+      ctx.fillRect(seg.x * gridSize + 1, seg.y * gridSize + 1, gridSize - 2, gridSize - 2);
+    });
+    ctx.globalAlpha = 1;
+  });
+
+  if (mySnake) {
+    mySnake.body.forEach((seg, i) => {
+      ctx.fillStyle = myColor;
+      ctx.globalAlpha = i === 0 ? 1 : (mySnake.alive ? 0.85 : 0.3);
+      ctx.fillRect(seg.x * gridSize + 1, seg.y * gridSize + 1, gridSize - 2, gridSize - 2);
+    });
+    ctx.globalAlpha = 1;
+  }
+}
+
+function startLoops() {
+  clearInterval(moveTimer);
+  clearInterval(writeTimer);
+  moveTimer = setInterval(tick, 150);
+  writeTimer = setInterval(writeMyState, 150);
+  draw();
+}
+
+function leaveRoom() {
+  connected = false;
+  clearInterval(moveTimer);
+  clearInterval(writeTimer);
+  if (playersRef) {
+    playersRef.off();
+    playersRef.child(playerId).remove().catch(() => {});
+  }
+  if (foodRef) foodRef.off();
+  overlay.innerHTML = `<h2>Join a game</h2><p>Enter your name and a room code. Anyone who joins the same room code plays with you, from anywhere.</p><input id="name-input" placeholder="Your name" maxlength="12" value="${playerName}"><input id="room-input" placeholder="Room code (e.g. lime7)" maxlength="16"><button id="join-btn">Join / Create Room</button><div id="join-error" style="color:#f87171; font-size:12px;"></div>`;
+  overlay.classList.remove('hidden');
+  leaveBtn.style.display = 'none';
+  roomInfo.textContent = 'Not connected';
+  statusEl.textContent = '';
+  playersList.innerHTML = '';
+  document.getElementById('join-btn').addEventListener('click', joinRoom);
+}
+
+function changeDirection(dx, dy) {
+  if (!mySnake) return;
+  if (dx === -mySnake.dir.x && dy === -mySnake.dir.y) return;
+  mySnake.nextDir = { x: dx, y: dy };
+}
+
+document.addEventListener('keydown', (e) => {
+  switch (e.key) {
+    case 'ArrowUp': case 'w': case 'W': changeDirection(0, -1); break;
+    case 'ArrowDown': case 's': case 'S': changeDirection(0, 1); break;
+    case 'ArrowLeft': case 'a': case 'A': changeDirection(-1, 0); break;
+    case 'ArrowRight': case 'd': case 'D': changeDirection(1, 0); break;
+  }
+});
+document.getElementById('up').addEventListener('click', () => changeDirection(0, -1));
+document.getElementById('down').addEventListener('click', () => changeDirection(0, 1));
+document.getElementById('left').addEventListener('click', () => changeDirection(-1, 0));
+document.getElementById('right').addEventListener('click', () => changeDirection(1, 0));
+leaveBtn.addEventListener('click', leaveRoom);
+document.getElementById('join-btn').addEventListener('click', joinRoom);
+
+if (!firebaseReady) {
+  document.getElementById('join-error').textContent = "Firebase isn't configured yet — paste your config into the code near the top of the file (search for YOUR_API_KEY).";
+}
+
+draw();
+</script>
+</body>
+</html>
